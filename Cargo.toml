@@ -1,0 +1,19 @@
+[package]
+name = "core_net"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+thiserror = "2"
+tracing = { version = "0.1", features = ["attributes"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
+socket2 = "0.6"
+miette = { version = "7", features = ["fancy"] }
+time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
+tracing-rolling-file = "0.1"
+serde = { version = "1", features = ["derive"] }
+rmp-serde = "1"
+
+[dev-dependencies]
