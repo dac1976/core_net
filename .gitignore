@@ -1,41 +1,57 @@
-# Prerequisites
-*.d
+# === Rust / Cargo ===
+/target/
+**/target/
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# Cargo lockfile:
+# Keep Cargo.lock for binaries, ignore for libraries
+# (see notes below)
+# Cargo.lock
 
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
+# === Build artifacts ===
+*.rlib
+*.rmeta
+*.dSYM
+*.exe
+*.dll
 *.so
 *.dylib
-*.dll
 
-# Fortran module files
-*.mod
-*.smod
+# === Logs ===
+*.log
 
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
+# === OS-specific ===
+.DS_Store
+Thumbs.db
 
-# Executables
-*.exe
-*.out
-*.app
+# === Editor / IDE ===
 
-# debug information files
-*.dwo
+# VS Code
+.vscode/
+
+# JetBrains (CLion / IntelliJ Rust)
+.idea/
+*.iml
+
+# Vim
+*.swp
+*.swo
+
+# Emacs
+*~
+
+# === Environment / local config ===
+.env
+.env.*
+*.local
+
+# === Coverage / profiling ===
+/coverage/
+*.profraw
+*.profdata
+
+# === Rust Analyzer (optional cache) ===
+# rust-project.json
+
+# === Misc ===
+*.tmp
+*.bak
