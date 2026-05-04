@@ -68,6 +68,8 @@ async fn main() -> Result<()> {
     let broadcast_addr = "127.255.255.255:9200".parse().into_diagnostic()?;
 
     let mut replies_seen = 0usize;
+    let mut saw_ping_reply = false;
+    let mut saw_echo_reply = false;
 
     while let Some(event) = rx.recv().await {
         match event {
@@ -77,20 +79,11 @@ async fn main() -> Result<()> {
                 let msg1 =
                     build_raw_message(cfg.expected_magic_string, 1, b"broadcast ping payload");
 
-                let msg2 =
-                    build_raw_message(cfg.expected_magic_string, 2, b"broadcast echo me back");
-
                 handle
                     .send_to_async(broadcast_addr, &msg1)
                     .await
                     .into_diagnostic()
                     .wrap_err("failed to send broadcast ping")?;
-
-                handle
-                    .send_to_async(broadcast_addr, &msg2)
-                    .await
-                    .into_diagnostic()
-                    .wrap_err("failed to send broadcast echo")?;
             }
 
             UdpBroadcastEvent::Closed { local_addr } => {
@@ -109,6 +102,19 @@ async fn main() -> Result<()> {
                             "received broadcast ping reply"
                         );
                         replies_seen += 1;
+                        saw_ping_reply = true;
+
+                        let msg2 = build_raw_message(
+                            cfg.expected_magic_string,
+                            2,
+                            b"broadcast echo me back",
+                        );
+
+                        handle
+                            .send_to_async(broadcast_addr, &msg2)
+                            .await
+                            .into_diagnostic()
+                            .wrap_err("failed to send broadcast echo")?;
                     }
                     1002 => {
                         info!(
@@ -117,6 +123,7 @@ async fn main() -> Result<()> {
                             "received broadcast echo reply"
                         );
                         replies_seen += 1;
+                        saw_echo_reply = true;
                     }
                     other => {
                         info!(
@@ -128,7 +135,7 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                if replies_seen >= 2 {
+                if replies_seen >= 2 || (saw_ping_reply && saw_echo_reply) {
                     let _ = handle.close().await;
                 }
             }

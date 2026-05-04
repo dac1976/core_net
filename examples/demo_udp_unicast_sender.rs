@@ -65,6 +65,9 @@ async fn main() -> Result<()> {
     });
 
     let mut replies_seen = 0usize;
+    let mut saw_ping_reply = false;
+    let mut saw_echo_reply = false;
+    let mut saw_deferred_reply = false;
 
     while let Some(event) = rx.recv().await {
         match event {
@@ -73,28 +76,11 @@ async fn main() -> Result<()> {
 
                 let msg1 = build_raw_message(cfg.expected_magic_string, 1, b"udp ping payload");
 
-                let msg2 = build_raw_message(cfg.expected_magic_string, 2, b"udp echo me back");
-
-                let msg3 =
-                    build_raw_message(cfg.expected_magic_string, 3, b"udp deferred work please");
-
                 handle
                     .send_to_async(remote_addr, &msg1)
                     .await
                     .into_diagnostic()
                     .wrap_err("failed to send udp ping")?;
-
-                handle
-                    .send_to_async(remote_addr, &msg2)
-                    .await
-                    .into_diagnostic()
-                    .wrap_err("failed to send udp echo")?;
-
-                handle
-                    .send_to_async(remote_addr, &msg3)
-                    .await
-                    .into_diagnostic()
-                    .wrap_err("failed to send udp deferred")?;
             }
 
             UdpUnicastEvent::Closed { local_addr } => {
@@ -113,6 +99,16 @@ async fn main() -> Result<()> {
                             "received udp ping reply"
                         );
                         replies_seen += 1;
+                        saw_ping_reply = true;
+
+                        let msg2 =
+                            build_raw_message(cfg.expected_magic_string, 2, b"udp echo me back");
+
+                        handle
+                            .send_to_async(remote_addr, &msg2)
+                            .await
+                            .into_diagnostic()
+                            .wrap_err("failed to send udp echo")?;
                     }
                     1002 => {
                         info!(
@@ -121,6 +117,19 @@ async fn main() -> Result<()> {
                             "received udp echo reply"
                         );
                         replies_seen += 1;
+                        saw_echo_reply = true;
+
+                        let msg3 = build_raw_message(
+                            cfg.expected_magic_string,
+                            3,
+                            b"udp deferred work please",
+                        );
+
+                        handle
+                            .send_to_async(remote_addr, &msg3)
+                            .await
+                            .into_diagnostic()
+                            .wrap_err("failed to send udp deferred")?;
                     }
                     1003 => {
                         info!(
@@ -129,6 +138,7 @@ async fn main() -> Result<()> {
                             "received udp deferred reply"
                         );
                         replies_seen += 1;
+                        saw_deferred_reply = true;
                     }
                     other => {
                         info!(
@@ -140,7 +150,7 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                if replies_seen >= 3 {
+                if replies_seen >= 3 || (saw_ping_reply && saw_echo_reply && saw_deferred_reply) {
                     let _ = handle.close().await;
                 }
             }

@@ -72,6 +72,8 @@ async fn main() -> Result<()> {
     });
 
     let mut replies_seen = 0usize;
+    let mut saw_ping_reply = false;
+    let mut saw_echo_reply = false;
 
     while let Some(event) = rx.recv().await {
         match event {
@@ -81,15 +83,8 @@ async fn main() -> Result<()> {
                 let msg1 =
                     build_raw_message(cfg.expected_magic_string, 1, b"multicast ping payload");
 
-                let msg2 =
-                    build_raw_message(cfg.expected_magic_string, 2, b"multicast echo me back");
-
                 if let Err(err) = handle.send_to_group_async(&msg1).await {
                     error!(error = %err, "failed to send multicast ping");
-                }
-
-                if let Err(err) = handle.send_to_group_async(&msg2).await {
-                    error!(error = %err, "failed to send multicast echo");
                 }
             }
 
@@ -120,6 +115,17 @@ async fn main() -> Result<()> {
                             "received multicast ping reply"
                         );
                         replies_seen += 1;
+                        saw_ping_reply = true;
+
+                        let msg2 = build_raw_message(
+                            cfg.expected_magic_string,
+                            2,
+                            b"multicast echo me back",
+                        );
+
+                        if let Err(err) = handle.send_to_group_async(&msg2).await {
+                            error!(error = %err, "failed to send multicast echo");
+                        }
                     }
                     1002 => {
                         info!(
@@ -128,6 +134,7 @@ async fn main() -> Result<()> {
                             "received multicast echo reply"
                         );
                         replies_seen += 1;
+                        saw_echo_reply = true;
                     }
                     other => {
                         info!(
@@ -139,7 +146,7 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                if replies_seen >= 2 {
+                if replies_seen >= 2 || (saw_ping_reply && saw_echo_reply) {
                     let _ = handle.close().await;
                 }
             }

@@ -83,6 +83,10 @@ async fn main() -> Result<()> {
     });
 
     let mut replies_seen = 0usize;
+    let mut saw_ping_reply = false;
+    let mut saw_echo_reply = false;
+    let mut saw_deferred_reply = false;
+    let mut saw_msgpack_reply = false;
 
     while let Some(event) = rx.recv().await {
         match event {
@@ -94,46 +98,11 @@ async fn main() -> Result<()> {
 
                 let ping = build_raw_message(cfg.expected_magic_string, 1, b"ping payload");
 
-                let echo = build_raw_message(cfg.expected_magic_string, 2, b"echo me back");
-
-                let deferred =
-                    build_raw_message(cfg.expected_magic_string, 3, b"please do deferred work");
-
-                let msgpack_req = MsgPackPingRequest {
-                    name: "Duncan".to_string(),
-                    count: 42,
-                };
-
-                let msgpack_payload = to_msgpack_vec(&msgpack_req)
-                    .into_diagnostic()
-                    .wrap_err("failed to encode MessagePack request")?;
-
-                let msgpack_message =
-                    build_msgpack_message(cfg.expected_magic_string, 10, &msgpack_payload);
-
                 handle
                     .send_to_server_async(&ping)
                     .await
                     .into_diagnostic()
                     .wrap_err("failed to send ping message")?;
-
-                handle
-                    .send_to_server_async(&echo)
-                    .await
-                    .into_diagnostic()
-                    .wrap_err("failed to send echo message")?;
-
-                handle
-                    .send_to_server_async(&deferred)
-                    .await
-                    .into_diagnostic()
-                    .wrap_err("failed to send deferred message")?;
-
-                handle
-                    .send_to_server_async(&msgpack_message)
-                    .await
-                    .into_diagnostic()
-                    .wrap_err("failed to send MessagePack message")?;
             }
 
             ClientEvent::Disconnected { server_addr } => {
@@ -154,6 +123,15 @@ async fn main() -> Result<()> {
                             "received ping reply"
                         );
                         replies_seen += 1;
+                        saw_ping_reply = true;
+
+                        let echo = build_raw_message(cfg.expected_magic_string, 2, b"echo me back");
+
+                        handle
+                            .send_to_server_async(&echo)
+                            .await
+                            .into_diagnostic()
+                            .wrap_err("failed to send echo message")?;
                     }
 
                     (1002, ArchiveType::Raw) => {
@@ -164,6 +142,19 @@ async fn main() -> Result<()> {
                             "received echo reply"
                         );
                         replies_seen += 1;
+                        saw_echo_reply = true;
+
+                        let deferred = build_raw_message(
+                            cfg.expected_magic_string,
+                            3,
+                            b"please do deferred work",
+                        );
+
+                        handle
+                            .send_to_server_async(&deferred)
+                            .await
+                            .into_diagnostic()
+                            .wrap_err("failed to send deferred message")?;
                     }
 
                     (1003, ArchiveType::Raw) => {
@@ -174,6 +165,25 @@ async fn main() -> Result<()> {
                             "received deferred reply"
                         );
                         replies_seen += 1;
+                        saw_deferred_reply = true;
+
+                        let msgpack_req = MsgPackPingRequest {
+                            name: "Duncan".to_string(),
+                            count: 42,
+                        };
+
+                        let msgpack_payload = to_msgpack_vec(&msgpack_req)
+                            .into_diagnostic()
+                            .wrap_err("failed to encode MessagePack request")?;
+
+                        let msgpack_message =
+                            build_msgpack_message(cfg.expected_magic_string, 10, &msgpack_payload);
+
+                        handle
+                            .send_to_server_async(&msgpack_message)
+                            .await
+                            .into_diagnostic()
+                            .wrap_err("failed to send MessagePack message")?;
                     }
 
                     (1010, ArchiveType::MessagePack) => {
@@ -189,6 +199,7 @@ async fn main() -> Result<()> {
                             "received MessagePack reply"
                         );
                         replies_seen += 1;
+                        saw_msgpack_reply = true;
                     }
 
                     (other_id, other_archive) => {
@@ -202,7 +213,9 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                if replies_seen >= 4 {
+                if replies_seen >= 4
+                    || (saw_ping_reply && saw_echo_reply && saw_deferred_reply && saw_msgpack_reply)
+                {
                     let _ = handle.disconnect().await;
                 }
             }
