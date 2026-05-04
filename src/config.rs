@@ -157,7 +157,7 @@ pub struct UdpConfig {
 impl Default for UdpConfig {
     fn default() -> Self {
         Self {
-            max_datagram_size: 64 * 1024,
+            max_datagram_size: 65507,
             max_allowed_unsent_async_messages: 100,
             send_pool_msg_size: 0,
             recv_pool_msg_count: 0,
@@ -209,7 +209,7 @@ impl Default for UdpMulticastConfig {
                 group_port: 9300,
                 interface_addr: Ipv4Addr::UNSPECIFIED,
             },
-            max_datagram_size: 64 * 1024,
+            max_datagram_size: 65507,
             max_allowed_unsent_async_messages: 100,
             send_pool_msg_size: 0,
             recv_pool_msg_count: 0,

@@ -33,6 +33,9 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, instrument, warn};
 
+#[cfg(target_os = "windows")]
+use std::os::windows::io::AsRawSocket;
+
 const COMPONENT: &str = "udp_unicast";
 
 #[derive(Debug, Clone)]
@@ -322,6 +325,34 @@ fn create_udp_socket(
     socket.set_broadcast(config.socket.broadcast)?;
     socket.set_nonblocking(true)?;
     socket.bind(&local_addr.into())?;
+
+    // CRITICAL FIX: disable UDP connreset on Windows else sending unicast to a target not yet
+    // listening will cause us to think it is an error and give up.
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Networking::WinSock::{WSAIoctl, SIO_UDP_CONNRESET};
+
+        unsafe {
+            let mut bytes_returned: u32 = 0;
+            let enable: u32 = 0; // FALSE → disable UDP connreset
+
+            let ret = WSAIoctl(
+                socket.as_raw_socket() as usize, // socket2::Socket works here
+                SIO_UDP_CONNRESET,
+                &enable as *const _ as *mut _,
+                std::mem::size_of_val(&enable) as u32,
+                std::ptr::null_mut(),
+                0,
+                &mut bytes_returned,
+                std::ptr::null_mut(),
+                None,
+            );
+
+            if ret != 0 {
+                eprintln!("WSAIoctl SIO_UDP_CONNRESET failed");
+            }
+        }
+    }
 
     Ok(socket.into())
 }

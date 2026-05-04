@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     let (tx, mut rx) = mpsc::channel(1024);
 
     let mut cfg = UdpConfig::default();
-    cfg.max_datagram_size = 64 * 1024;
+    cfg.max_datagram_size = 65507;
     cfg.send_pool_msg_size = 8192;
     cfg.recv_pool_msg_count = 128;
     cfg.recv_pool_msg_size = 8192;

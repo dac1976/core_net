@@ -36,5 +36,7 @@ time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
 tracing-rolling-file = "0.1"
 serde = { version = "1", features = ["derive"] }
 rmp-serde = "1"
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock"] }
+winapi = { version = "0.3", features = ["winsock2", "ws2ipdef", "mstcpip"] }
 
 [dev-dependencies]

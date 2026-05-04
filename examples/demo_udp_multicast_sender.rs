@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
         group_port: 9300,
         interface_addr: Ipv4Addr::UNSPECIFIED,
     };
-    cfg.max_datagram_size = 64 * 1024;
+    cfg.max_datagram_size = 65507;
     cfg.send_pool_msg_size = 8192;
     cfg.recv_pool_msg_count = 128;
     cfg.recv_pool_msg_size = 8192;
