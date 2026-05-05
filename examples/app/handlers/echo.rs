@@ -38,7 +38,13 @@ pub async fn handle_echo(ctx: MessageContext, message: Message) {
         "handling echo message"
     );
 
-    let response = build_raw_message(ctx.expected_magic, 1002, message.payload.as_slice());
+    let response = build_raw_message(
+        ctx.expected_magic,
+        1002,
+        message.payload.as_slice(),
+        None,
+        None,
+    );
 
     if let Err(err) = ctx.send_reply(&response).await {
         error!(error = %err, "failed to send echo response");

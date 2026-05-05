@@ -84,7 +84,7 @@ pub async fn handle_msgpack_ping(ctx: MessageContext, message: Message) {
         }
     };
 
-    let full_message = build_msgpack_message(ctx.expected_magic, 1010, &payload);
+    let full_message = build_msgpack_message(ctx.expected_magic, 1010, &payload, None, None);
 
     if let Err(err) = ctx.send_reply(&full_message).await {
         error!(error = %err, "failed to send MessagePack reply");

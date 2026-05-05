@@ -80,8 +80,13 @@ async fn main() -> Result<()> {
             UdpMulticastEvent::Bound { local_addr } => {
                 info!(%local_addr, "multicast sender bound");
 
-                let msg1 =
-                    build_raw_message(cfg.expected_magic_string, 1, b"multicast ping payload");
+                let msg1 = build_raw_message(
+                    cfg.expected_magic_string,
+                    1,
+                    b"multicast ping payload",
+                    None,
+                    None,
+                );
 
                 if let Err(err) = handle.send_to_group_async(&msg1).await {
                     error!(error = %err, "failed to send multicast ping");
@@ -121,6 +126,8 @@ async fn main() -> Result<()> {
                             cfg.expected_magic_string,
                             2,
                             b"multicast echo me back",
+                            None,
+                            None,
                         );
 
                         if let Err(err) = handle.send_to_group_async(&msg2).await {

@@ -96,7 +96,8 @@ async fn main() -> Result<()> {
             } => {
                 info!(%server_addr, %local_addr, "client connected");
 
-                let ping = build_raw_message(cfg.expected_magic_string, 1, b"ping payload");
+                let ping =
+                    build_raw_message(cfg.expected_magic_string, 1, b"ping payload", None, None);
 
                 handle
                     .send_to_server_async(&ping)
@@ -125,7 +126,13 @@ async fn main() -> Result<()> {
                         replies_seen += 1;
                         saw_ping_reply = true;
 
-                        let echo = build_raw_message(cfg.expected_magic_string, 2, b"echo me back");
+                        let echo = build_raw_message(
+                            cfg.expected_magic_string,
+                            2,
+                            b"echo me back",
+                            None,
+                            None,
+                        );
 
                         handle
                             .send_to_server_async(&echo)
@@ -148,6 +155,8 @@ async fn main() -> Result<()> {
                             cfg.expected_magic_string,
                             3,
                             b"please do deferred work",
+                            None,
+                            None,
                         );
 
                         handle
@@ -176,8 +185,13 @@ async fn main() -> Result<()> {
                             .into_diagnostic()
                             .wrap_err("failed to encode MessagePack request")?;
 
-                        let msgpack_message =
-                            build_msgpack_message(cfg.expected_magic_string, 10, &msgpack_payload);
+                        let msgpack_message = build_msgpack_message(
+                            cfg.expected_magic_string,
+                            10,
+                            &msgpack_payload,
+                            None,
+                            None,
+                        );
 
                         handle
                             .send_to_server_async(&msgpack_message)

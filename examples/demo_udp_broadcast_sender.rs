@@ -76,8 +76,13 @@ async fn main() -> Result<()> {
             UdpBroadcastEvent::Bound { local_addr } => {
                 info!(%local_addr, %broadcast_addr, "broadcast sender bound");
 
-                let msg1 =
-                    build_raw_message(cfg.expected_magic_string, 1, b"broadcast ping payload");
+                let msg1 = build_raw_message(
+                    cfg.expected_magic_string,
+                    1,
+                    b"broadcast ping payload",
+                    None,
+                    None,
+                );
 
                 handle
                     .send_to_async(broadcast_addr, &msg1)
@@ -108,6 +113,8 @@ async fn main() -> Result<()> {
                             cfg.expected_magic_string,
                             2,
                             b"broadcast echo me back",
+                            None,
+                            None,
                         );
 
                         handle

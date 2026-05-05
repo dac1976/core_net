@@ -45,7 +45,8 @@ pub async fn handle_deferred_work(ctx: MessageContext, message: Message) {
         let mut reply_payload = b"DEFERRED_ACK: ".to_vec();
         reply_payload.extend_from_slice(&payload);
 
-        let response = build_raw_message(ctx_clone.expected_magic, 1003, &reply_payload);
+        let response =
+            build_raw_message(ctx_clone.expected_magic, 1003, &reply_payload, None, None);
 
         if let Err(err) = ctx_clone.send_reply(&response).await {
             error!(error = %err, "failed to send deferred response");

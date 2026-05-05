@@ -38,7 +38,7 @@ pub async fn handle_ping(ctx: MessageContext, message: Message) {
         "handling ping message"
     );
 
-    let response = build_raw_message(ctx.expected_magic, 1001, b"PONG");
+    let response = build_raw_message(ctx.expected_magic, 1001, b"PONG", None, None);
 
     if let Err(err) = ctx.send_reply(&response).await {
         error!(error = %err, "failed to send ping response");

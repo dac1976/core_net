@@ -74,7 +74,13 @@ async fn main() -> Result<()> {
             UdpUnicastEvent::Bound { local_addr } => {
                 info!(%local_addr, %remote_addr, "sender bound");
 
-                let msg1 = build_raw_message(cfg.expected_magic_string, 1, b"udp ping payload");
+                let msg1 = build_raw_message(
+                    cfg.expected_magic_string,
+                    1,
+                    b"udp ping payload",
+                    None,
+                    None,
+                );
 
                 handle
                     .send_to_async(remote_addr, &msg1)
@@ -101,8 +107,13 @@ async fn main() -> Result<()> {
                         replies_seen += 1;
                         saw_ping_reply = true;
 
-                        let msg2 =
-                            build_raw_message(cfg.expected_magic_string, 2, b"udp echo me back");
+                        let msg2 = build_raw_message(
+                            cfg.expected_magic_string,
+                            2,
+                            b"udp echo me back",
+                            None,
+                            None,
+                        );
 
                         handle
                             .send_to_async(remote_addr, &msg2)
@@ -123,6 +134,8 @@ async fn main() -> Result<()> {
                             cfg.expected_magic_string,
                             3,
                             b"udp deferred work please",
+                            None,
+                            None,
                         );
 
                         handle
