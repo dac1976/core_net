@@ -19,24 +19,72 @@
 // and GNU Lesser General Public License along with this program. If
 // not, see <http://www.gnu.org/licenses/>.
 
+/// Demo application message handlers.
+///
+/// Reuses the same dispatcher handlers used by:
+///
+/// - TCP demos
+/// - UDP broadcast demos
+/// - UDP multicast demos
+///
+/// demonstrating transport-independent message handling.
 mod app;
 
 use app::handlers;
+
 use core_net::{
     config::UdpConfig,
-    logging::{init_tracing, LogTimeMode, LoggingConfig},
+    logging::{LogTimeMode, LoggingConfig, init_tracing},
     messaging::dispatcher::{BoxFuture, MessageContext, MessageDispatcherBuilder, ReplyHandle},
     messaging::message::Message,
     protocol::DEFAULT_MAGIC_STRING,
     udp_unicast::{UdpUnicastEndpoint, UdpUnicastEvent},
 };
+
 use miette::{IntoDiagnostic, Result, WrapErr};
+
 use std::{net::SocketAddr, sync::Arc};
+
 use tokio::sync::mpsc;
+
 use tracing::{error, info};
 
+/// Demo UDP unicast listener entry point.
+///
+/// This application demonstrates:
+///
+/// - UDP unicast reception
+/// - dispatcher-based message routing
+/// - transport-independent handlers
+/// - async UDP replies
+/// - pooled UDP datagram buffers
+///
+/// High-level architecture:
+///
+/// ```text
+/// UDP socket
+///   -> UdpUnicastEndpoint
+///   -> UdpUnicastEvent::DatagramReceived
+///   -> MessageDispatcher
+///   -> registered async handlers
+/// ```
+///
+/// Unlike the TCP examples:
+///
+/// - there are no persistent sessions
+/// - replies are routed directly using peer socket addresses
+///
+/// Unlike broadcast/multicast:
+///
+/// - packets are addressed directly to this endpoint only
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialise structured tracing/logging.
+    //
+    // Logs are written both:
+    //
+    // - to rotating log files
+    // - to stderr/console
     init_tracing(&LoggingConfig {
         directory: "logs",
         file_name: "demo_udp_unicast_listener.log",
@@ -48,21 +96,56 @@ async fn main() -> Result<()> {
     })
     .wrap_err("failed to initialize tracing")?;
 
+    // Event channel used by the UDP endpoint to publish:
+    //
+    // - bind events
+    // - received datagrams
+    // - endpoint closure
     let (tx, mut rx) = mpsc::channel(1024);
 
+    // Configure UDP unicast endpoint.
     let mut cfg = UdpConfig::default();
+
+    // Maximum supported UDP datagram size.
     cfg.max_datagram_size = 65507;
+
+    // Outbound pooled message buffer size.
     cfg.send_pool_msg_size = 8192;
+
+    // Receive pool configuration.
+    //
+    // Incoming datagrams are stored in reusable pooled buffers to minimise
+    // allocation churn under sustained receive load.
     cfg.recv_pool_msg_count = 128;
     cfg.recv_pool_msg_size = 8192;
+
+    // Expected protocol magic string used by the core_net parser layer.
     cfg.expected_magic_string = DEFAULT_MAGIC_STRING;
 
+    // Local UDP bind address.
+    //
+    // This demo binds only to localhost for simple local testing.
+    //
+    // In production systems this would commonly be:
+    //
+    // - 0.0.0.0:<port>
+    // - or a specific NIC/interface address
     let local_addr = "127.0.0.1:9100".parse().into_diagnostic()?;
+
+    // Create UDP unicast endpoint.
     let endpoint = UdpUnicastEndpoint::new(local_addr, cfg.clone(), tx);
+
+    // Handle used for async outbound replies.
     let handle = endpoint.handle();
 
+    // Build generic async UDP send function used by dispatcher reply
+    // routing.
+    //
+    // This abstraction allows dispatcher handlers to remain transport
+    // independent.
     let send_fn = Arc::new(move |to: SocketAddr, bytes: Vec<u8>| {
         let handle = handle.clone();
+
         Box::pin(async move {
             handle
                 .send_to_async(to, &bytes)
@@ -71,10 +154,16 @@ async fn main() -> Result<()> {
         }) as BoxFuture<Result<(), String>>
     });
 
+    // Create dispatcher builder.
     let mut dispatcher_builder = MessageDispatcherBuilder::new();
+
+    // Register demo handlers.
     handlers::register_handlers(&mut dispatcher_builder);
+
+    // Finalise dispatcher.
     let dispatcher = dispatcher_builder.build();
 
+    // Run UDP endpoint in background task.
     tokio::spawn(async move {
         if let Err(err) = endpoint.run().await {
             error!(error = %err, "udp unicast listener failed");
@@ -83,30 +172,50 @@ async fn main() -> Result<()> {
 
     info!("udp unicast listener starting on {}", local_addr);
 
+    // Main UDP endpoint event loop.
     while let Some(event) = rx.recv().await {
         match event {
+            // UDP socket successfully bound.
             UdpUnicastEvent::Bound { local_addr } => {
                 info!(%local_addr, "listener bound");
             }
 
+            // Endpoint closed.
             UdpUnicastEvent::Closed { local_addr } => {
                 info!(%local_addr, "listener closed");
+
                 break;
             }
 
+            // UDP datagram received.
             UdpUnicastEvent::DatagramReceived { datagram } => {
+                // Source peer/socket address.
                 let peer = datagram.from;
+
+                // Convert UDP datagram into transport-independent dispatcher
+                // message type.
                 let app_message = Message::from_udp(datagram);
 
+                // Build dispatcher context.
+                //
+                // For UDP transports replies are routed using:
+                //
+                // - peer socket address
+                // - generic async send function
                 let ctx = MessageContext {
                     source_addr: Some(peer),
+
                     expected_magic: cfg.expected_magic_string,
+
                     reply_handle: ReplyHandle::Udp {
                         peer_addr: peer,
+
                         send_fn: send_fn.clone(),
                     },
                 };
 
+                // Dispatch message to the registered async handler based on
+                // message id.
                 dispatcher.dispatch(ctx, app_message).await;
             }
         }

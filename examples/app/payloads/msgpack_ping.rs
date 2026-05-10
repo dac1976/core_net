@@ -21,16 +21,52 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Example typed request payload used by the MessagePack ping demo.
+///
+/// This struct is serialized/deserialized using Serde and MessagePack.
+///
+/// It demonstrates how higher-level structured messages can be transported
+/// using core-net's raw framing layer:
+///
+/// ```text
+/// core-net message header
+///   -> archive_type = MessagePack
+///   -> payload      = MessagePack(PingRequest)
+/// ```
+///
+/// Example logical content:
+///
+/// ```text
+/// name  = "Duncan"
+/// count = 42
+/// ```
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct PingRequest {
+    /// Name or label included in the ping request.
     pub name: String,
+
+    /// Example numeric value included in the request.
     pub count: u32,
 }
 
+/// Example typed reply payload used by the MessagePack ping demo.
+///
+/// This is encoded as MessagePack and returned to the peer as the payload
+/// of a core-net message with archive type `MessagePack`.
+///
+/// Example logical content:
+///
+/// ```text
+/// ok      = true
+/// message = "Hello Duncan, count=42"
+/// ```
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct PingReply {
+    /// Indicates whether the request was handled successfully.
     pub ok: bool,
+
+    /// Human-readable reply message.
     pub message: String,
 }

@@ -19,18 +19,68 @@
 // and GNU Lesser General Public License along with this program. If
 // not, see <http://www.gnu.org/licenses/>.
 
-use crate::protocol::{ArchiveType, MessageHeader, MAGIC_STRING_LEN, RESPONSE_ADDRESS_LEN};
+use crate::protocol::{ArchiveType, MAGIC_STRING_LEN, MessageHeader, RESPONSE_ADDRESS_LEN};
 
+/// Lightweight outbound message header representation.
+///
+/// This structure contains the metadata required to build a complete
+/// wire-format message.
+///
+/// The payload itself is not stored here.
+///
+/// Wire layout:
+///
+/// ```text
+/// +-------------------+
+/// | magic string      |
+/// +-------------------+
+/// | response address  |
+/// +-------------------+
+/// | response port     |
+/// +-------------------+
+/// | message id        |
+/// +-------------------+
+/// | archive type      |
+/// +-------------------+
+/// | total length      |
+/// +-------------------+
+/// | payload bytes     |
+/// +-------------------+
+/// ```
 #[derive(Debug, Clone)]
 pub struct OutboundMessageHeader {
+    /// Protocol magic string used to validate framing.
     pub magic_string: [u8; MAGIC_STRING_LEN],
+
+    /// Optional response address field.
+    ///
+    /// This is protocol-level metadata and is independent of the transport
+    /// socket address.
     pub response_address: [u8; RESPONSE_ADDRESS_LEN],
+
+    /// Optional response port field.
     pub response_port: u16,
+
+    /// Application message identifier.
+    ///
+    /// Used by the dispatcher layer for routing.
     pub message_id: i32,
+
+    /// Payload/archive encoding type.
+    ///
+    /// Examples:
+    ///
+    /// - Raw
+    /// - Protobuf
+    /// - FlatBuffer
+    /// - MessagePack
     pub archive_type: ArchiveType,
 }
 
 impl OutboundMessageHeader {
+    /// Creates a new outbound message header.
+    ///
+    /// Optional response fields default to zero-filled values when omitted.
     pub fn new(
         magic_string: [u8; MAGIC_STRING_LEN],
         message_id: i32,
@@ -40,31 +90,82 @@ impl OutboundMessageHeader {
     ) -> Self {
         Self {
             magic_string,
+
             response_address: response_address.unwrap_or([0u8; RESPONSE_ADDRESS_LEN]),
+
             response_port: response_port.unwrap_or(0),
+
             message_id,
+
             archive_type,
         }
     }
 }
 
+/// Internal helper that serialises:
+///
+/// - protocol header
+/// - payload
+///
+/// into a caller-provided output buffer.
+///
+/// Important optimisation:
+///
+/// The output buffer is reused rather than recreated, allowing callers to:
+///
+/// - avoid repeated allocations
+/// - retain Vec capacity
+/// - reduce heap churn under sustained traffic
 fn write_message(out: &mut Vec<u8>, header: &OutboundMessageHeader, payload: &[u8]) {
+    // Total wire-format message length including protocol header.
     let total_length = (MessageHeader::WIRE_SIZE + payload.len()) as u32;
 
+    // Reuse caller-owned Vec allocation.
     out.clear();
+
+    // Ensure enough capacity exists.
+    //
+    // reserve() only grows if required.
     out.reserve(MessageHeader::WIRE_SIZE + payload.len());
 
+    // ---------------------------------------------------------------------
+    // Serialise protocol header fields.
+    // ---------------------------------------------------------------------
+
     out.extend_from_slice(&header.magic_string);
+
     out.extend_from_slice(&header.response_address);
+
     out.extend_from_slice(&header.response_port.to_le_bytes());
+
     out.extend_from_slice(&header.message_id.to_le_bytes());
+
     out.push(header.archive_type as u8);
+
     out.extend_from_slice(&total_length.to_le_bytes());
 
-    // 👇 payload written directly into same buffer
+    // ---------------------------------------------------------------------
+    // Append payload directly into same output buffer.
+    // ---------------------------------------------------------------------
+
     out.extend_from_slice(payload);
 }
 
+/// Builds a RAW-format message directly into a caller-provided buffer.
+///
+/// This is the preferred high-performance API for hot paths because:
+///
+/// - Vec allocation can be reused
+/// - capacity is retained across calls
+/// - fewer temporary buffers are created
+///
+/// Typical usage:
+///
+/// ```rust
+/// let mut msg = Vec::with_capacity(65536);
+///
+/// build_raw_message_into(...);
+/// ```
 pub fn build_raw_message_into(
     out: &mut Vec<u8>,
     magic_string: [u8; MAGIC_STRING_LEN],
@@ -84,6 +185,10 @@ pub fn build_raw_message_into(
     write_message(out, &header, payload);
 }
 
+/// Convenience API that allocates and returns a RAW-format message.
+///
+/// Simpler ergonomics but less efficient than *_into APIs because a new
+/// Vec allocation is created per call.
 pub fn build_raw_message(
     magic_string: [u8; MAGIC_STRING_LEN],
     message_id: i32,
@@ -91,6 +196,7 @@ pub fn build_raw_message(
     response_address: Option<[u8; RESPONSE_ADDRESS_LEN]>,
     response_port: Option<u16>,
 ) -> Vec<u8> {
+    // Preallocate exact-ish required capacity.
     let mut out = Vec::with_capacity(MessageHeader::WIRE_SIZE + payload.len());
 
     build_raw_message_into(
@@ -105,6 +211,7 @@ pub fn build_raw_message(
     out
 }
 
+/// Builds a Protobuf-format message into a caller-provided buffer.
 pub fn build_protobuf_message_into(
     out: &mut Vec<u8>,
     magic_string: [u8; MAGIC_STRING_LEN],
@@ -124,6 +231,7 @@ pub fn build_protobuf_message_into(
     write_message(out, &header, payload);
 }
 
+/// Convenience API returning an owned Protobuf-format message buffer.
 pub fn build_protobuf_message(
     magic_string: [u8; MAGIC_STRING_LEN],
     message_id: i32,
@@ -145,6 +253,7 @@ pub fn build_protobuf_message(
     out
 }
 
+/// Builds a FlatBuffer-format message into a caller-provided buffer.
 pub fn build_flatbuffer_message_into(
     out: &mut Vec<u8>,
     magic_string: [u8; MAGIC_STRING_LEN],
@@ -164,6 +273,7 @@ pub fn build_flatbuffer_message_into(
     write_message(out, &header, payload);
 }
 
+/// Convenience API returning an owned FlatBuffer-format message buffer.
 pub fn build_flatbuffer_message(
     magic_string: [u8; MAGIC_STRING_LEN],
     message_id: i32,
@@ -185,6 +295,7 @@ pub fn build_flatbuffer_message(
     out
 }
 
+/// Builds a MessagePack-format message into a caller-provided buffer.
 pub fn build_msgpack_message_into(
     out: &mut Vec<u8>,
     magic_string: [u8; MAGIC_STRING_LEN],
@@ -204,6 +315,7 @@ pub fn build_msgpack_message_into(
     write_message(out, &header, payload);
 }
 
+/// Convenience API returning an owned MessagePack-format message buffer.
 pub fn build_msgpack_message(
     magic_string: [u8; MAGIC_STRING_LEN],
     message_id: i32,
@@ -225,6 +337,15 @@ pub fn build_msgpack_message(
     out
 }
 
+/// Internal helper allowing payload bytes to be written directly into the
+/// destination message buffer.
+///
+/// This avoids:
+///
+/// - intermediate payload Vec allocations
+/// - payload copy steps
+///
+/// and is useful for high-throughput data generation paths.
 fn write_message_with_payload<F>(
     out: &mut Vec<u8>,
     header: &OutboundMessageHeader,
@@ -233,23 +354,65 @@ fn write_message_with_payload<F>(
 ) where
     F: FnOnce(&mut Vec<u8>),
 {
+    // Total wire-format message length including protocol header.
     let total_length = (MessageHeader::WIRE_SIZE + payload_len) as u32;
 
+    // Reuse caller-owned Vec allocation.
     out.clear();
+
+    // Ensure sufficient capacity exists.
     out.reserve(MessageHeader::WIRE_SIZE + payload_len);
 
-    // header
+    // ---------------------------------------------------------------------
+    // Serialise protocol header.
+    // ---------------------------------------------------------------------
+
     out.extend_from_slice(&header.magic_string);
+
     out.extend_from_slice(&header.response_address);
+
     out.extend_from_slice(&header.response_port.to_le_bytes());
+
     out.extend_from_slice(&header.message_id.to_le_bytes());
+
     out.push(header.archive_type as u8);
+
     out.extend_from_slice(&total_length.to_le_bytes());
 
-    // 👇 payload written directly into same buffer
+    // ---------------------------------------------------------------------
+    // Caller writes payload directly into final destination buffer.
+    // ---------------------------------------------------------------------
+
     write_payload(out);
 }
 
+/// High-performance RAW message builder allowing direct payload generation
+/// into the final output buffer.
+///
+/// This is the most allocation-efficient API in this module.
+///
+/// Example use cases:
+///
+/// - packet generators
+/// - real-time acquisition systems
+/// - zero-copy-ish serialisation paths
+/// - high-rate telemetry
+///
+/// Example:
+///
+/// ```rust
+/// build_raw_message_with_payload_into(
+///     &mut msg,
+///     magic,
+///     id,
+///     payload_len,
+///     None,
+///     None,
+///     |out| {
+///         out.extend_from_slice(samples);
+///     },
+/// );
+/// ```
 pub fn build_raw_message_with_payload_into<F>(
     out: &mut Vec<u8>,
     magic_string: [u8; MAGIC_STRING_LEN],

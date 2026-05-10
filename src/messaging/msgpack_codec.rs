@@ -19,12 +19,62 @@
 // and GNU Lesser General Public License along with this program. If
 // not, see <http://www.gnu.org/licenses/>.
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
+/// Serialises a Rust value into a MessagePack byte vector.
+///
+/// This is a thin convenience wrapper around `rmp-serde`.
+///
+/// MessagePack is useful for:
+///
+/// - compact binary messaging
+/// - network transport
+/// - cross-language interoperability
+/// - lower overhead than JSON
+///
+/// Example:
+///
+/// ```rust
+/// #[derive(Serialize)]
+/// struct MyMessage {
+///     value: u32,
+/// }
+///
+/// let msg = MyMessage { value: 42 };
+///
+/// let bytes = to_msgpack_vec(&msg)?;
+/// ```
+///
+/// Allocation behaviour:
+///
+/// - allocates a new Vec<u8>
+/// - encoded bytes are owned by caller
 pub fn to_msgpack_vec<T: Serialize>(value: &T) -> Result<Vec<u8>, rmp_serde::encode::Error> {
     rmp_serde::to_vec(value)
 }
 
+/// Deserialises a MessagePack byte slice into a Rust type.
+///
+/// This is a thin convenience wrapper around `rmp-serde`.
+///
+/// The target type must implement `Deserialize`.
+///
+/// Example:
+///
+/// ```rust
+/// #[derive(Deserialize)]
+/// struct MyReply {
+///     ok: bool,
+/// }
+///
+/// let reply: MyReply = from_msgpack_slice(bytes)?;
+/// ```
+///
+/// Performance notes:
+///
+/// - reads directly from provided byte slice
+/// - no intermediate UTF-8 conversion
+/// - efficient for binary network protocols
 pub fn from_msgpack_slice<T: DeserializeOwned>(
     bytes: &[u8],
 ) -> Result<T, rmp_serde::decode::Error> {

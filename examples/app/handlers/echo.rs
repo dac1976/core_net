@@ -24,12 +24,56 @@ use core_net::messaging::{
     message::Message,
     message_builder::build_raw_message,
 };
+
 use tracing::{error, info, instrument};
 
+/// Registers the echo message handler with the dispatcher.
+///
+/// Message ID mapping:
+///
+/// ```text
+/// 2 -> handle_echo()
+/// ```
+///
+/// The echo handler is intentionally simple and useful for:
+///
+/// - connectivity testing
+/// - request/reply validation
+/// - protocol verification
+/// - latency testing
+/// - dispatcher testing
+///
+/// The handler immediately replies with the same payload data it received.
 pub fn register(builder: &mut MessageDispatcherBuilder) {
     builder.register(2, handle_echo);
 }
 
+/// Handles incoming echo messages.
+///
+/// Behaviour:
+///
+/// ```text
+/// receive payload
+///   -> build reply message
+///   -> send identical payload back
+/// ```
+///
+/// Reply message id:
+///
+/// ```text
+/// 1002
+/// ```
+///
+/// This demonstrates the simplest request/reply pattern using:
+///
+/// - MessageDispatcher
+/// - MessageContext
+/// - async reply sending
+///
+/// The tracing `instrument` macro automatically creates structured tracing
+/// spans for this handler.
+///
+/// `skip(ctx, message)` avoids logging large/internal structures.
 #[instrument(skip(ctx, message))]
 pub async fn handle_echo(ctx: MessageContext, message: Message) {
     info!(
@@ -38,6 +82,15 @@ pub async fn handle_echo(ctx: MessageContext, message: Message) {
         "handling echo message"
     );
 
+    // Build reply message using the same payload bytes received from
+    // the client.
+    //
+    // No payload modification is performed.
+    //
+    // The response uses:
+    //
+    // - same expected protocol magic string
+    // - reply message id = 1002
     let response = build_raw_message(
         ctx.expected_magic,
         1002,
@@ -46,6 +99,10 @@ pub async fn handle_echo(ctx: MessageContext, message: Message) {
         None,
     );
 
+    // Send async reply back to the originating peer.
+    //
+    // MessageContext internally knows how to route replies back through
+    // the correct connection/session.
     if let Err(err) = ctx.send_reply(&response).await {
         error!(error = %err, "failed to send echo response");
     }

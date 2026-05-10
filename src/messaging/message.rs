@@ -23,30 +23,89 @@ use crate::{
     pool::MessageBuf, protocol::MessageHeader, tcp_server::ReceivedMessage,
     udp_common::ReceivedDatagram,
 };
+
 use std::net::SocketAddr;
 
+/// Transport-independent application message.
+///
+/// This type is the canonical message representation used by the dispatcher
+/// layer.
+///
+/// Messages originating from:
+///
+/// - TCP
+/// - UDP unicast
+/// - UDP broadcast
+/// - UDP multicast
+///
+/// are all normalised into this common structure before being passed to
+/// application handlers.
+///
+/// This allows handlers and dispatch logic to remain transport-agnostic.
 #[derive(Debug, Clone)]
 pub struct Message {
+    /// Source socket address if known.
+    ///
+    /// Examples:
+    ///
+    /// - TCP peer address
+    /// - UDP sender address
     pub source_addr: Option<SocketAddr>,
+
+    /// Parsed protocol message header.
+    ///
+    /// Contains:
+    ///
+    /// - message id
+    /// - archive type
+    /// - payload length
+    /// - protocol metadata
     pub header: MessageHeader,
+
+    /// Message payload buffer.
+    ///
+    /// Internally this uses the pooled MessageBuf abstraction to minimise
+    /// allocation churn and unnecessary payload copies.
     pub payload: MessageBuf,
 }
 
 impl Message {
+    /// Creates a transport-independent Message from a TCP server message.
+    ///
+    /// This converts the TCP-specific receive representation into the common
+    /// dispatcher/application representation.
+    ///
+    /// Important:
+    ///
+    /// - payload ownership is moved, not copied
+    /// - pooled payload buffer is retained
     #[allow(dead_code)]
     pub fn from_tcp_server(peer_addr: SocketAddr, message: ReceivedMessage) -> Self {
         Self {
             source_addr: Some(peer_addr),
+
             header: message.header,
+
             payload: message.payload,
         }
     }
 
+    /// Creates a transport-independent Message from a UDP datagram.
+    ///
+    /// This converts the UDP-specific receive representation into the common
+    /// dispatcher/application representation.
+    ///
+    /// Important:
+    ///
+    /// - payload ownership is moved, not copied
+    /// - pooled payload buffer is retained
     #[allow(dead_code)]
     pub fn from_udp(datagram: ReceivedDatagram) -> Self {
         Self {
             source_addr: Some(datagram.from),
+
             header: datagram.header,
+
             payload: datagram.payload,
         }
     }

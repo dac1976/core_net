@@ -19,19 +19,66 @@
 // and GNU Lesser General Public License along with this program. If
 // not, see <http://www.gnu.org/licenses/>.
 
+/// Example message handler demonstrating deferred/background work.
 pub mod deferred;
+
+/// Simple echo request/reply handler.
 pub mod echo;
+
+/// Example MessagePack-based ping handler.
 pub mod msgpack_ping;
+
+/// Simple raw ping request/reply handler.
 pub mod ping;
 
 use core_net::messaging::dispatcher::MessageDispatcherBuilder;
 
+/// Registers all example/demo message handlers with the dispatcher.
+///
+/// This module demonstrates the intended usage pattern for the
+/// `MessageDispatcherBuilder`:
+///
+/// ```text
+/// create dispatcher builder
+///   -> register handlers by message id
+///   -> optionally set default handler
+///   -> build dispatcher
+/// ```
+///
+/// Current message id mappings:
+///
+/// ```text
+/// 1 -> ping
+/// 2 -> echo
+/// 3 -> deferred
+/// 4 -> msgpack_ping
+/// ```
+///
+/// A default handler is also installed to catch unregistered message ids.
+///
+/// This is useful for:
+///
+/// - debugging
+/// - protocol diagnostics
+/// - unknown message logging
+/// - development/testing
 pub fn register_handlers(builder: &mut MessageDispatcherBuilder) {
+    // Register simple raw ping handler.
     ping::register(builder);
+
+    // Register echo request/reply handler.
     echo::register(builder);
+
+    // Register deferred/background work handler.
     deferred::register(builder);
+
+    // Register MessagePack-based ping handler.
     msgpack_ping::register(builder);
 
+    // Install default handler for unregistered message ids.
+    //
+    // This prevents unknown messages from silently disappearing and is
+    // especially useful during protocol development and debugging.
     builder.set_default(
         |ctx: core_net::messaging::dispatcher::MessageContext,
          message: core_net::messaging::message::Message| async move {
