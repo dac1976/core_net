@@ -22,54 +22,104 @@
 use crate::{
     config::{MulticastGroup, UdpMulticastConfig},
     pool::{BufferPool, MessageBuf},
-    udp_common::{parse_datagram, ReceivedDatagram, UdpDatagramError},
+    udp_common::{ReceivedDatagram, UdpDatagramError, parse_datagram},
 };
+
 use socket2::{Domain, Protocol, Socket, Type};
+
 use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
 };
+
 use tokio::{
     net::UdpSocket,
-    sync::{mpsc, Mutex},
+    sync::{Mutex, mpsc},
 };
+
 use tokio_util::sync::CancellationToken;
+
 use tracing::{error, info, instrument, warn};
 
+/// Component name used in structured log records.
 const COMPONENT: &str = "udp_multicast";
 
+/// Application-facing events emitted by `UdpMulticastEndpoint`.
+///
+/// The endpoint owns the UDP socket and reports lifecycle/receive events to
+/// application code through an async channel.
 #[derive(Debug, Clone)]
 pub enum UdpMulticastEvent {
+    /// UDP socket successfully bound.
     Bound {
+        /// Actual local socket address.
         local_addr: SocketAddr,
     },
+
+    /// Multicast group joined successfully.
     Joined {
+        /// Local socket address.
         local_addr: SocketAddr,
+
+        /// Human-readable multicast group endpoint string.
         group: String,
     },
+
+    /// Complete and validated core-net datagram received.
     DatagramReceived {
+        /// Parsed UDP datagram.
         datagram: ReceivedDatagram,
     },
+
+    /// Endpoint closed.
     Closed {
+        /// Local socket address that was closed.
         local_addr: SocketAddr,
     },
 }
 
+/// Internal outbound command consumed by the multicast endpoint write loop.
 #[derive(Clone)]
 enum OutboundCommand {
+    /// Send a complete core-net message to a specific UDP peer.
     SendTo { to: SocketAddr, payload: MessageBuf },
+
+    /// Send a complete core-net message to the configured multicast group.
     SendToGroup { payload: MessageBuf },
+
+    /// Close the endpoint.
     Close,
 }
 
+/// Cloneable control handle for a UDP multicast endpoint.
+///
+/// Application code uses this handle to:
+///
+/// - send to a specific peer
+/// - send to the configured multicast group
+/// - close the endpoint
+/// - request shutdown
 #[derive(Clone)]
 pub struct UdpMulticastHandle {
+    /// Outbound command queue consumed by the endpoint write loop.
     outbound_tx: mpsc::Sender<OutboundCommand>,
+
+    /// Optional pooled send buffer storage.
     send_pool: Option<BufferPool>,
+
+    /// Endpoint cancellation token.
     shutdown: CancellationToken,
 }
 
 impl UdpMulticastHandle {
+    /// Sends a complete core-net message to a specific UDP peer.
+    ///
+    /// `full_message` must already contain:
+    ///
+    /// - core-net protocol header
+    /// - payload
+    ///
+    /// This method awaits if the outbound queue is full.
     #[instrument(skip(self, full_message), fields(to = %to, len = full_message.len()))]
     pub async fn send_to_async(
         &self,
@@ -84,6 +134,9 @@ impl UdpMulticastHandle {
             .map_err(|_| UdpDatagramError::OutboundQueueClosed)
     }
 
+    /// Sends a complete core-net message to the configured multicast group.
+    ///
+    /// The destination group address and port come from `UdpMulticastConfig`.
     #[instrument(skip(self, full_message), fields(len = full_message.len()))]
     pub async fn send_to_group_async(&self, full_message: &[u8]) -> Result<(), UdpDatagramError> {
         let msg = MessageBuf::from_slice_with_pool(self.send_pool.as_ref(), full_message);
@@ -94,6 +147,7 @@ impl UdpMulticastHandle {
             .map_err(|_| UdpDatagramError::OutboundQueueClosed)
     }
 
+    /// Requests graceful endpoint close.
     pub async fn close(&self) -> Result<(), UdpDatagramError> {
         self.outbound_tx
             .send(OutboundCommand::Close)
@@ -101,21 +155,50 @@ impl UdpMulticastHandle {
             .map_err(|_| UdpDatagramError::OutboundQueueClosed)
     }
 
+    /// Cancels the endpoint run loop.
+    ///
+    /// This is a broader shutdown signal than `close()`.
     pub fn shutdown(&self) {
         self.shutdown.cancel();
     }
 }
 
+/// UDP multicast endpoint.
+///
+/// The endpoint:
+///
+/// - owns one UDP socket
+/// - optionally joins a multicast group
+/// - receives core-net framed UDP datagrams
+/// - emits application events
+/// - accepts outbound send commands through a handle
+/// - optionally uses pooled buffers
 pub struct UdpMulticastEndpoint {
+    /// Endpoint configuration.
     config: UdpMulticastConfig,
+
+    /// Application event sink.
     app_event_tx: mpsc::Sender<UdpMulticastEvent>,
+
+    /// Endpoint shutdown token.
     shutdown: CancellationToken,
+
+    /// Optional outbound send pool.
     send_pool: Option<BufferPool>,
+
+    /// Outbound command sender.
     outbound_tx: mpsc::Sender<OutboundCommand>,
+
+    /// Outbound command receiver.
+    ///
+    /// Wrapped in Option so it can be moved into `run()` exactly once.
     outbound_rx: Arc<Mutex<Option<mpsc::Receiver<OutboundCommand>>>>,
 }
 
 impl UdpMulticastEndpoint {
+    /// Creates a new UDP multicast endpoint.
+    ///
+    /// The socket is not created until `run()` is called.
     pub fn new(config: UdpMulticastConfig, app_event_tx: mpsc::Sender<UdpMulticastEvent>) -> Self {
         let send_pool = if config.send_pool_msg_size > 0 {
             Some(BufferPool::new(
@@ -126,6 +209,10 @@ impl UdpMulticastEndpoint {
             None
         };
 
+        // Bounded outbound queue.
+        //
+        // This prevents unbounded memory growth if sends are produced faster
+        // than the socket can transmit them.
         let (outbound_tx, outbound_rx) =
             mpsc::channel::<OutboundCommand>(config.max_allowed_unsent_async_messages);
 
@@ -139,6 +226,7 @@ impl UdpMulticastEndpoint {
         }
     }
 
+    /// Returns a cloneable control handle for this endpoint.
     pub fn handle(&self) -> UdpMulticastHandle {
         UdpMulticastHandle {
             outbound_tx: self.outbound_tx.clone(),
@@ -147,16 +235,22 @@ impl UdpMulticastEndpoint {
         }
     }
 
+    /// Creates/binds the socket, optionally joins the multicast group, and
+    /// runs the endpoint event loops.
     #[instrument(skip(self))]
     pub async fn run(self) -> Result<(), UdpDatagramError> {
         let std_socket = create_multicast_socket(&self.config)?;
+
         let socket = Arc::new(UdpSocket::from_std(std_socket)?);
 
+        // Join multicast group before publishing the Bound/Joined events
+        // when configured to do so.
         if self.config.join_group_on_start {
             apply_multicast_membership(&socket, &self.config)?;
         }
 
         let local_addr = socket.local_addr()?;
+
         let group_string = match &self.config.group {
             MulticastGroup::V4 {
                 group_addr,
@@ -165,6 +259,7 @@ impl UdpMulticastEndpoint {
             } => {
                 format!("{group_addr}:{group_port}")
             }
+
             MulticastGroup::V6 {
                 group_addr,
                 group_port,
@@ -174,6 +269,7 @@ impl UdpMulticastEndpoint {
             }
         };
 
+        // Notify application that the socket has bound.
         let _ = self
             .app_event_tx
             .send(UdpMulticastEvent::Bound { local_addr })
@@ -187,6 +283,7 @@ impl UdpMulticastEndpoint {
                 "udp multicast endpoint bound and joined"
             );
 
+            // Notify application that group membership is active.
             let _ = self
                 .app_event_tx
                 .send(UdpMulticastEvent::Joined {
@@ -203,6 +300,7 @@ impl UdpMulticastEndpoint {
             );
         }
 
+        // Optional receive pool.
         let recv_pool = if self.config.recv_pool_msg_count > 0 {
             Some(BufferPool::new(
                 self.config.recv_pool_msg_size,
@@ -212,10 +310,15 @@ impl UdpMulticastEndpoint {
             None
         };
 
+        // Move outbound receiver into the running endpoint.
+        //
+        // This prevents multiple run loops from consuming the same queue.
         let mut rx_guard = self.outbound_rx.lock().await;
+
         let outbound_rx = rx_guard
             .take()
             .ok_or(UdpDatagramError::ReceiverAlreadyTaken)?;
+
         drop(rx_guard);
 
         let res = run_endpoint(
@@ -238,6 +341,7 @@ impl UdpMulticastEndpoint {
             );
         }
 
+        // Notify application that endpoint has closed.
         let _ = self
             .app_event_tx
             .send(UdpMulticastEvent::Closed { local_addr })
@@ -247,6 +351,16 @@ impl UdpMulticastEndpoint {
     }
 }
 
+/// Runs read/write loops for the UDP multicast endpoint.
+///
+/// The socket is shared between:
+///
+/// ```text
+/// read loop  -> socket to app events
+/// write loop -> outbound queue to socket
+/// ```
+///
+/// Whichever side exits first cancels the other.
 #[instrument(skip(socket, outbound_rx, app_event_tx, shutdown, config, recv_pool))]
 async fn run_endpoint(
     socket: Arc<UdpSocket>,
@@ -259,6 +373,7 @@ async fn run_endpoint(
     let recv_socket = Arc::clone(&socket);
     let send_socket = Arc::clone(&socket);
 
+    // Precompute multicast group target used by SendToGroup.
     let group_target = match &config.group {
         MulticastGroup::V4 {
             group_addr,
@@ -273,6 +388,7 @@ async fn run_endpoint(
         } => SocketAddr::new(IpAddr::V6(*group_addr), *group_port),
     };
 
+    // Receive loop.
     let read_task = async {
         let mut buf = vec![
             0u8;
@@ -283,9 +399,16 @@ async fn run_endpoint(
 
         loop {
             tokio::select! {
-                _ = shutdown.cancelled() => return Ok::<(), UdpDatagramError>(()),
+                _ = shutdown.cancelled() => {
+                    return Ok::<(), UdpDatagramError>(());
+                }
+
                 res = recv_socket.recv_from(&mut buf) => {
                     let (len, from) = res?;
+
+                    // Parse and validate the received core-net datagram.
+                    //
+                    // Payload storage uses recv_pool when possible.
                     let datagram = parse_datagram(
                         &buf[..len],
                         from,
@@ -293,6 +416,7 @@ async fn run_endpoint(
                         recv_pool.as_ref(),
                     )?;
 
+                    // Forward received datagram to application.
                     app_event_tx
                         .send(UdpMulticastEvent::DatagramReceived { datagram })
                         .await
@@ -303,25 +427,39 @@ async fn run_endpoint(
                                 error = %e,
                                 "failed to forward udp multicast app event"
                             );
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, e)
+
+                            std::io::Error::new(
+                                std::io::ErrorKind::BrokenPipe,
+                                e,
+                            )
                         })?;
                 }
             }
         }
     };
 
+    // Send loop.
     let write_task = async {
         loop {
             tokio::select! {
-                _ = shutdown.cancelled() => return Ok::<(), UdpDatagramError>(()),
+                _ = shutdown.cancelled() => {
+                    return Ok::<(), UdpDatagramError>(());
+                }
+
                 cmd = outbound_rx.recv() => {
                     match cmd {
                         Some(OutboundCommand::SendTo { to, payload }) => {
-                            send_socket.send_to(payload.as_slice(), to).await?;
+                            send_socket
+                                .send_to(payload.as_slice(), to)
+                                .await?;
                         }
+
                         Some(OutboundCommand::SendToGroup { payload }) => {
-                            send_socket.send_to(payload.as_slice(), group_target).await?;
+                            send_socket
+                                .send_to(payload.as_slice(), group_target)
+                                .await?;
                         }
+
                         Some(OutboundCommand::Close) | None => {
                             return Ok(());
                         }
@@ -331,13 +469,19 @@ async fn run_endpoint(
         }
     };
 
+    // Race receive/send loops.
+    //
+    // If either exits, cancel the whole endpoint.
     tokio::select! {
         res = read_task => {
             shutdown.cancel();
+
             res?;
         }
+
         res = write_task => {
             shutdown.cancel();
+
             res?;
         }
     }
@@ -345,11 +489,15 @@ async fn run_endpoint(
     Ok(())
 }
 
+/// Creates and binds a UDP socket suitable for multicast use.
+///
+/// `socket2` is used so socket options can be configured before bind.
 fn create_multicast_socket(config: &UdpMulticastConfig) -> std::io::Result<std::net::UdpSocket> {
     let bind_addr = match &config.group {
         MulticastGroup::V4 {
             local_bind_addr, ..
         } => *local_bind_addr,
+
         MulticastGroup::V6 {
             local_bind_addr, ..
         } => *local_bind_addr,
@@ -375,12 +523,26 @@ fn create_multicast_socket(config: &UdpMulticastConfig) -> std::io::Result<std::
         socket.set_recv_buffer_size(size)?;
     }
 
+    // Tokio requires sockets to be non-blocking before conversion.
     socket.set_nonblocking(true)?;
+
     socket.bind(&bind_addr.into())?;
 
     Ok(socket.into())
 }
 
+/// Applies multicast-specific socket options and joins the configured group.
+///
+/// For IPv4 this configures:
+///
+/// - group membership
+/// - multicast loopback
+/// - multicast TTL
+///
+/// For IPv6 this configures:
+///
+/// - group membership
+/// - multicast loopback
 fn apply_multicast_membership(
     socket: &UdpSocket,
     config: &UdpMulticastConfig,
@@ -392,15 +554,19 @@ fn apply_multicast_membership(
             ..
         } => {
             socket.join_multicast_v4(*group_addr, *interface_addr)?;
+
             socket.set_multicast_loop_v4(config.multicast_loop_v4)?;
+
             socket.set_multicast_ttl_v4(config.send_ttl_v4)?;
         }
+
         MulticastGroup::V6 {
             group_addr,
             interface_index,
             ..
         } => {
             socket.join_multicast_v6(group_addr, *interface_index)?;
+
             socket.set_multicast_loop_v6(config.multicast_loop_v6)?;
         }
     }
